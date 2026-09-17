@@ -278,6 +278,60 @@ def is_admin() -> bool:
         return False
 
 
+def _running_as_compiled_exe() -> bool:
+    """True when running as a compiled executable - covers both
+    PyInstaller (sets sys.frozen) and Nuitka (defines __compiled__ in
+    the module namespace instead; it does NOT set sys.frozen)."""
+    if getattr(sys, "frozen", False):
+        return True
+    if "__compiled__" in globals():
+        return True
+    return False
+
+
+def relaunch_as_admin() -> bool:
+    """
+    Relaunches this program with an elevated token, which makes Windows
+    show the native UAC consent prompt. Works when running as a plain
+    .py script (relaunched via python.exe), a PyInstaller .exe, or a
+    Nuitka .exe.
+
+    Note: if this program was compiled with Nuitka's --windows-uac-admin
+    flag, Windows will already have shown the UAC prompt and elevated
+    the process BEFORE any Python code runs - is_admin() will already be
+    True and this function will never be called in that case. This
+    function exists as a fallback for running the raw .py script, or an
+    exe built without that manifest flag.
+
+    Returns True if the elevated relaunch was successfully *started*
+    (the UAC prompt was shown and accepted) - the original, unelevated
+    process should exit right after this returns True, letting the new
+    elevated instance take over. Returns False if the user clicked "No"
+    on the UAC prompt, or if elevation could not be requested at all.
+    """
+    try:
+        if _running_as_compiled_exe():
+            # Compiled .exe (PyInstaller or Nuitka): relaunch the exe itself.
+            executable = sys.executable
+            param_list = sys.argv[1:]
+        else:
+            # Plain .py script: relaunch via the same Python interpreter,
+            # passing this script's path as the first argument.
+            executable = sys.executable
+            param_list = [os.path.abspath(__file__)] + sys.argv[1:]
+
+        params = " ".join(f'"{a}"' for a in param_list)
+
+        # SW_SHOWNORMAL = 1. ShellExecuteW returns a value > 32 on success;
+        # 1223 (ERROR_CANCELLED) means the user clicked "No" on the prompt.
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", executable, params, None, 1
+        )
+        return int(result) > 32
+    except Exception:
+        return False
+
+
 # ==============================================================================
 # DRIVE DISCOVERY
 # ==============================================================================
@@ -972,9 +1026,19 @@ def main():
         sys.exit(1)
 
     if not is_admin():
-        print("ERROR: This tool must be run as Administrator.")
-        print("Right-click the terminal/shortcut and choose 'Run as administrator', then try again.")
-        sys.exit(1)
+        print("This tool requires Administrator privileges.")
+        print("Requesting elevation (a UAC prompt should appear)...")
+        elevated = relaunch_as_admin()
+        if elevated:
+            # The elevated copy is now starting up in a new window/process.
+            # This unelevated instance is done - exit quietly.
+            sys.exit(0)
+        else:
+            print()
+            print("ERROR: Elevation was cancelled or could not be requested.")
+            print("This tool cannot continue without Administrator privileges.")
+            input("\nPress Enter to exit...")
+            sys.exit(1)
 
     theme_init()
     try:
