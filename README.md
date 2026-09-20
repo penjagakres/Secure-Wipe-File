@@ -51,11 +51,9 @@ pip install -r requirements.txt
 Run from an **elevated** (Administrator) command prompt:
 
 ```bash
-<<<<<<< HEAD
-python main.py
-=======
+<<<<<<<
 python secure_wipe_tool.py
->>>>>>> 578f6372e80bb937a6941f38769ccb714a189eeb
+>>>>>>> 
 ```
 
 On startup, the tool will:
